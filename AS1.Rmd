@@ -1,0 +1,147 @@
+---
+title: "APM466 AS1"
+author: "Zefan Huang"
+date: "14/02/2022"
+output: pdf_document
+---
+
+```{r}
+library(jrvFinance)
+library(stringr)
+DATA <- read.csv(file ="C:/Users/zefan/OneDrive/Desktop/selected.csv")
+```
+
+#Compute Dirty Price
+```{r}
+#Dirty price = Accrued interest + Clean Price
+#Accrued interest = n/365* Annual Coupon Rate = F * c/M * D/T
+#n = days since last payment  Face value is 100 here.
+Clean_price <- DATA[c("X2022.01.10","X2022.01.11","X2022.01.12", "X2022.01.13","X2022.01.14","X2022.01.17","X2022.01.18","X2022.01.19","X2022.01.20","X2022.01.21")]
+Price_date <- c("2022/01/10","2022/01/11","2022/01/12","2022/01/13","2022/01/14","2022/01/17","2022/01/18",
+                   "2022/01/19","2022/01/20","2022/01/21")
+Last_payment_date <- c("2021/09/01","2021/08/01","2021/08/01","2021/08/01","2021/08/01","2021/09/01","2021/09/01","2021/09/01","2021/09/01","2021/09/01")
+
+                  
+Dirty_price <- matrix(nrow=10,ncol=10)
+coupon_payment <- as.numeric(sub("%","",DATA$coupon))#face value is 100
+for (i in c(1:10)){
+  for (j in c(1:10)){
+    days_diff <- as.Date(as.character(Price_date[j]), format="%Y/%m/%d")-
+                  as.Date(Last_payment_date[i], format="%Y/%m/%d")
+    Dirty_price[i,j]=  Clean_price[i,j] + coupon_payment[i]*days_diff/365
+  }
+}
+```
+
+.
+#compute YTM
+Linear interpolation technique is used for this question,which is accurate enough
+I compute YTM by future cash flows using bond.yield function from library jrvFinance.
+
+```{r}
+#bond.yield function in library jrvFinance can do the job.Clean prices are used here.
+YTM <-matrix(nrow=10,ncol=10)
+for (i in 1:10){
+  for (j in 1:10) {
+    YTM[i,j]=bond.yield(settle=Price_date[j],mature=DATA$maturity.date[i],coupon_payment2[i],freq=2,price=Clean_price[i,j],comp.freq=Inf, redemption_value=100)
+  }
+}
+
+x <- c(0.5,1,1.5,2,2.5,3,3.5,4,4.5,5)
+plot(x,YTM[,1],type="l",col="1",xlab="Time to Maturity (years)",ylab="Yield to Maturity",main="5-Year YTM Curves",ylim = c(0.002, 0.017))
+for (i in 2:10){
+lines(x,YTM[,i],col=i)
+}
+legend("bottomright",legend=Price_date,cex=0.5,col=1:10,lty=1)
+```
+
+#compute Spot rate
+Using bootstrapping to compute the spot rates.
+Algorithm:
+Step1:Repeat 10 times for 10 dates.
+Step2:Repeat 10 times for 10 bonds.
+In the loop: Step3:For maturity less that 6 months, $r(T) = -\frac{log(\frac{P}{N})}{T}$,Here P is dirty price.(First bond Here.)
+             Step4:For maturity more than 6 months(i.e. other 9 bonds),for j-th bond,$P = \sum_{h=1}^{j-1}P_{h}e^{-r(t_{h-1})t_{h-1}}+P_{j}e^{-r(t_{j})t_{j}}$, $r(t_{j-1})$ is calculated by previous process.
+             $r_{j}=--\frac{log(\frac{P-\sum_{h=1}^{j-1}P_{h}e^{-r(t_{h-1})t_{h-1}}}{N+couponpayment})}{T}$
+```{r}
+Spot_rate <- matrix(nrow=10,ncol=10)
+for (i in 1:10){
+  P_today <- Dirty_price[,i]
+  Spot_rate[i,1] <- -2*log(P_today[1]/(coupon_payment[1] + 100))
+    for(j in 2:10){
+    sum <- 0
+    for (k in 1:(j-1)){
+      sum <- sum + coupon_payment[j] * exp(-Spot_rate[i,k]*(0.5*k))
+    }
+    Spot_rate[i,j] <- log((P_today[j]-sum)/(coupon_payment[j] + 100))/((-1/2)*j)
+  }
+}
+plot(x,Spot_rate[1,],type="l",col="1",xlab="Time to Maturity (years)",ylab="Spot Rate",main="5-Year Spot Rate Curves",ylim = c(0.004,0.03))
+for (i in 2:10){
+lines(x,Spot_rate[i,],col=i)
+}
+legend("bottomright",legend=Price_date,cex=0.5,col=1:10,lty=1)
+```
+
+#Compute forward rate
+Algorithm:
+Step1:Repeat 10 times for 10 dates.
+Step2:Repeat 4 times for 4 1yr-nyr forward rates(n=1,2,3,4).
+In the loop: Step3:1yr-1yr is just the spot rate.
+             Step4:1yr-nyr forward rate:$f_{1-n}=(\frac{r(t_{2n})n-r(t_{2})}{n-1})$ ($r(t_{2})$ represents 1yr spot rate)
+             
+             
+```{r}
+y <- c(1,2,3,4)
+For_rate <-matrix(nrow=4,ncol=10)
+for (i in 2:5){
+  For_rate[i-1,] <- (Spot_rate[,i*2] * i - Spot_rate[,2]) / (i- 1)
+}
+plot(y,For_rate[,1],type="l",col="1",xlab="Time to Maturity (years)",ylab="Forward Rate",main="Forward Rate",ylim = c(0.004,0.04),xlim = c(1,4))
+for (i in 2:10){
+lines(y,For_rate[,i],col=i)
+}
+legend("bottomright",legend=Price_date,cex=0.5,col=1:10,lty=1)
+```
+
+#Two covariance matrices
+```{r}
+y1<-c()
+y2<-c()
+y3<-c()
+y4<-c()
+y5<-c()
+for (i in 1:9){
+  y1[i]=log(YTM[2,i+1]/YTM[2,i])
+  y2[i]=log(YTM[4,i+1]/YTM[4,i])
+  y3[i]=log(YTM[6,i+1]/YTM[6,i])
+  y4[i]=log(YTM[8,i+1]/YTM[8,i])
+  y5[i]=log(YTM[10,i+1]/YTM[10,i])
+}
+yield_matrix <- data.frame(y1,y2,y3,y4,y5) 
+yieldcov<-cov(yield_matrix)
+
+f1 <- c()
+f2 <- c()
+f3 <- c()
+f4 <- c()
+for(i in 1:9)
+{
+  f1[i]=log(For_rate[1,i+1]/For_rate[1,i])
+  f2[i]=log(For_rate[2,i+1]/For_rate[2,i])
+  f3[i]=log(For_rate[3,i+1]/For_rate[3,i])
+  f4[i]=log(For_rate[4,i+1]/For_rate[4,i])
+}
+for_matrix <-data.frame(f1,f2,f3,f4)
+forcov <-cov(for_matrix)
+```
+
+
+#eigenvalues eigenvectors
+```{r}
+eigeny<-eigen(yieldcov)
+eigenf<-eigen(forcov)
+eigeny
+eigenf
+```
+
